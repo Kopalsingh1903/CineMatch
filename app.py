@@ -3,12 +3,8 @@ import pandas as pd
 import numpy as np
 import json
 import ast
-#import plotly.graph_objects as go
-#import plotly.express as px
-import subprocess
-subprocess.run(["pip", "install", "plotly"], check=True)
-import plotly.graph_objects as go
-import plotly.express as px
+import altair as alt
+
 st.set_page_config(page_title="CineMatch", layout="wide", initial_sidebar_state="expanded")
 
 # ---- Netflix CSS ----
@@ -134,9 +130,9 @@ for key, default in [('watched', []), ('results', []), ('selected_titles', []), 
 # ---- Load data ----
 @st.cache_data
 def load_data():
-    df = pd.read_csv(r"C:\Users\Kopal\OneDrive\Cinematch\tmdb_movies_enriched.csv")
-    similarity_matrix = np.load(r"C:\Users\Kopal\OneDrive\Cinematch\similarity_matrix.npy")
-    with open(r"C:\Users\Kopal\OneDrive\Cinematch\title_to_index.json", "r", encoding="utf-8") as f:
+    df = pd.read_csv("tmdb_movies_enriched.csv")
+    similarity_matrix = np.load("similarity_matrix.npy")
+    with open("title_to_index.json", "r", encoding="utf-8") as f:
         title_to_index = json.load(f)
     return df, similarity_matrix, title_to_index
 
@@ -182,7 +178,7 @@ def get_recommendations(selected_titles, watched_titles, genre_filter=None, year
             break
     return results
 
-# ---- Feature 1: Taste Profile Radar Chart ----
+# ---- Feature 1: Taste Profile Chart (Altair) ----
 def build_radar(selected_titles):
     genre_counts = {g: 0 for g in ALL_GENRES}
     for title in selected_titles:
@@ -194,34 +190,21 @@ def build_radar(selected_titles):
                 if g in genre_counts:
                     genre_counts[g] += 1
 
-    # Keep top 10 genres for readability
     top_genres = sorted(genre_counts, key=genre_counts.get, reverse=True)[:10]
-    values = [genre_counts[g] for g in top_genres]
-    values += values[:1]  # close the polygon
-    labels = top_genres + top_genres[:1]
+    radar_df = pd.DataFrame({
+        'Genre': top_genres,
+        'Score': [genre_counts[g] for g in top_genres]
+    })
 
-    fig = go.Figure(go.Scatterpolar(
-        r=values,
-        theta=labels,
-        fill='toself',
-        fillcolor='rgba(229, 9, 20, 0.2)',
-        line=dict(color='#E50914', width=2),
-        marker=dict(color='#E50914', size=6)
-    ))
-    fig.update_layout(
-        polar=dict(
-            bgcolor='#1f1f1f',
-            radialaxis=dict(visible=True, range=[0, max(values)+0.5], color='#808080', gridcolor='#2a2a2a'),
-            angularaxis=dict(color='#e5e5e5', gridcolor='#2a2a2a')
-        ),
-        paper_bgcolor='#141414',
-        plot_bgcolor='#141414',
-        font=dict(color='#e5e5e5', family='Inter'),
-        showlegend=False,
-        margin=dict(t=40, b=40, l=60, r=60),
-        height=380
-    )
-    return fig
+    chart = alt.Chart(radar_df).mark_bar().encode(
+        x=alt.X('Score:Q', axis=alt.Axis(labelColor='#e5e5e5', titleColor='#e5e5e5', gridColor='#2a2a2a')),
+        y=alt.Y('Genre:N', sort='-x', axis=alt.Axis(labelColor='#e5e5e5', titleColor='#e5e5e5')),
+        color=alt.value('#E50914')
+    ).properties(
+        background='#141414',
+        height=300
+    ).configure_view(strokeOpacity=0)
+    return chart
 
 # ---- Feature 6: Cold Start recommendations by genre ----
 def cold_start_recommend(liked_genres, year_range=None, n=5):
@@ -276,7 +259,7 @@ st.markdown('<div class="netflix-tagline">TELL US WHAT YOU\'VE WATCHED. WE\'LL F
 tab1, tab2, tab3 = st.tabs(["🎬  RECOMMENDER", "📊  DATASET INSIGHTS", "🌱  NEW HERE?"])
 
 
-# TAB 1 — Main recommender (with radar chart)
+# TAB 1 — Main recommender
 
 with tab1:
     st.divider()
@@ -289,12 +272,11 @@ with tab1:
         max_selections=3
     )
 
-    # Taste radar — show as soon as ≥1 movie selected
     if selected_titles:
         st.markdown('<div class="section-heading">YOUR TASTE PROFILE</div>', unsafe_allow_html=True)
         st.caption("Built from the genres of your selected movies — your cinematic fingerprint.")
         fig_radar = build_radar(selected_titles)
-        st.plotly_chart(fig_radar, use_container_width=True)
+        st.altair_chart(fig_radar, use_container_width=True)
 
     if len(selected_titles) < 2:
         st.info("Select at least 2 movies to get recommendations.")
@@ -309,7 +291,6 @@ with tab1:
             year_range=year_range
         )
 
-    # Results
     if st.session_state.results:
         st.divider()
         st.markdown('<div class="section-heading">RECOMMENDED FOR YOU</div>', unsafe_allow_html=True)
@@ -390,48 +371,39 @@ with tab2:
     # Chart 1: Genre distribution
     with col_a:
         st.markdown('<div class="section-heading">GENRE DISTRIBUTION</div>', unsafe_allow_html=True)
-        genre_counts = (
+        genre_counts_df = (
             df['genres'].dropna()
             .str.split(',').explode()
             .str.strip().value_counts()
+            .head(15)
             .reset_index()
         )
-        genre_counts.columns = ['genre', 'count']
-        fig1 = px.bar(
-            genre_counts.head(15),
-            x='count', y='genre',
-            orientation='h',
-            color='count',
-            color_continuous_scale=[[0, '#2a2a2a'], [1, '#E50914']]
-        )
-        fig1.update_layout(
-            paper_bgcolor='#141414', plot_bgcolor='#1f1f1f',
-            font=dict(color='#e5e5e5', family='Inter'),
-            coloraxis_showscale=False,
-            yaxis=dict(autorange='reversed', gridcolor='#2a2a2a'),
-            xaxis=dict(gridcolor='#2a2a2a'),
-            margin=dict(t=10, b=10),
+        genre_counts_df.columns = ['Genre', 'Count']
+        fig1 = alt.Chart(genre_counts_df).mark_bar().encode(
+            x=alt.X('Count:Q', axis=alt.Axis(labelColor='#e5e5e5', titleColor='#e5e5e5', gridColor='#2a2a2a')),
+            y=alt.Y('Genre:N', sort='-x', axis=alt.Axis(labelColor='#e5e5e5', titleColor='#e5e5e5')),
+            color=alt.value('#E50914')
+        ).properties(
+            background='#141414',
             height=380
-        )
-        st.plotly_chart(fig1, use_container_width=True)
+        ).configure_view(strokeOpacity=0)
+        st.altair_chart(fig1, use_container_width=True)
 
     # Chart 2: Rating distribution
     with col_b:
         st.markdown('<div class="section-heading">RATING DISTRIBUTION</div>', unsafe_allow_html=True)
-        fig2 = px.histogram(
-            df, x='vote_average', nbins=25,
-            color_discrete_sequence=['#E50914']
-        )
-        fig2.update_layout(
-            paper_bgcolor='#141414', plot_bgcolor='#1f1f1f',
-            font=dict(color='#e5e5e5', family='Inter'),
-            xaxis=dict(title='Rating (0–10)', gridcolor='#2a2a2a'),
-            yaxis=dict(title='Number of Movies', gridcolor='#2a2a2a'),
-            margin=dict(t=10, b=10),
-            height=380,
-            bargap=0.05
-        )
-        st.plotly_chart(fig2, use_container_width=True)
+        fig2 = alt.Chart(df).mark_bar(color='#E50914').encode(
+            x=alt.X('vote_average:Q', bin=alt.Bin(maxbins=25),
+                    axis=alt.Axis(labelColor='#e5e5e5', titleColor='#e5e5e5', gridColor='#2a2a2a'),
+                    title='Rating'),
+            y=alt.Y('count():Q',
+                    axis=alt.Axis(labelColor='#e5e5e5', titleColor='#e5e5e5', gridColor='#2a2a2a'),
+                    title='Number of Movies')
+        ).properties(
+            background='#141414',
+            height=380
+        ).configure_view(strokeOpacity=0)
+        st.altair_chart(fig2, use_container_width=True)
 
     st.divider()
     col_c, col_d = st.columns(2)
@@ -440,21 +412,17 @@ with tab2:
     with col_c:
         st.markdown('<div class="section-heading">POPULARITY VS RATING</div>', unsafe_allow_html=True)
         st.caption("Correlation: ~0.05 — essentially independent signals")
-        fig3 = px.scatter(
-            df, x='vote_average', y='popularity',
-            hover_data=['title'],
-            color_discrete_sequence=['#E50914'],
-            opacity=0.5
-        )
-        fig3.update_layout(
-            paper_bgcolor='#141414', plot_bgcolor='#1f1f1f',
-            font=dict(color='#e5e5e5', family='Inter'),
-            xaxis=dict(title='Rating', gridcolor='#2a2a2a'),
-            yaxis=dict(title='Popularity Score', gridcolor='#2a2a2a'),
-            margin=dict(t=10, b=10),
+        fig3 = alt.Chart(df).mark_circle(color='#E50914', opacity=0.5).encode(
+            x=alt.X('vote_average:Q', title='Rating',
+                    axis=alt.Axis(labelColor='#e5e5e5', titleColor='#e5e5e5', gridColor='#2a2a2a')),
+            y=alt.Y('popularity:Q', title='Popularity',
+                    axis=alt.Axis(labelColor='#e5e5e5', titleColor='#e5e5e5', gridColor='#2a2a2a')),
+            tooltip=['title', 'vote_average', 'popularity']
+        ).properties(
+            background='#141414',
             height=380
-        )
-        st.plotly_chart(fig3, use_container_width=True)
+        ).configure_view(strokeOpacity=0)
+        st.altair_chart(fig3, use_container_width=True)
 
     # Chart 4: Genre trend over time
     with col_d:
@@ -468,25 +436,30 @@ with tab2:
         pivot_pct = pivot.div(pivot.sum(axis=1), axis=0) * 100
         pivot_pct = pivot_pct[pivot_pct.index >= 2017]
 
-        fig4 = go.Figure()
-        for genre, color in [('Action', '#808080'), ('Horror', '#E50914'), ('Thriller', '#46d369')]:
-            if genre in pivot_pct.columns:
-                fig4.add_trace(go.Scatter(
-                    x=pivot_pct.index, y=pivot_pct[genre],
-                    name=genre, mode='lines+markers',
-                    line=dict(color=color, width=2),
-                    marker=dict(size=6)
-                ))
-        fig4.update_layout(
-            paper_bgcolor='#141414', plot_bgcolor='#1f1f1f',
-            font=dict(color='#e5e5e5', family='Inter'),
-            xaxis=dict(title='Year', gridcolor='#2a2a2a'),
-            yaxis=dict(title='% Share', gridcolor='#2a2a2a'),
-            legend=dict(bgcolor='#1f1f1f', bordercolor='#2a2a2a'),
-            margin=dict(t=10, b=10),
-            height=380
+        trend_df = pivot_pct[['Action', 'Horror', 'Thriller']].reset_index().melt(
+            id_vars='release_year',
+            var_name='Genre',
+            value_name='Share'
         )
-        st.plotly_chart(fig4, use_container_width=True)
+
+        color_scale = alt.Scale(
+            domain=['Action', 'Horror', 'Thriller'],
+            range=['#808080', '#E50914', '#46d369']
+        )
+
+        fig4 = alt.Chart(trend_df).mark_line(point=True).encode(
+            x=alt.X('release_year:O', title='Year',
+                    axis=alt.Axis(labelColor='#e5e5e5', titleColor='#e5e5e5', gridColor='#2a2a2a')),
+            y=alt.Y('Share:Q', title='% Share',
+                    axis=alt.Axis(labelColor='#e5e5e5', titleColor='#e5e5e5', gridColor='#2a2a2a')),
+            color=alt.Color('Genre:N', scale=color_scale,
+                            legend=alt.Legend(labelColor='#e5e5e5', titleColor='#e5e5e5')),
+            strokeWidth=alt.value(2)
+        ).properties(
+            background='#141414',
+            height=380
+        ).configure_view(strokeOpacity=0)
+        st.altair_chart(fig4, use_container_width=True)
 
     st.divider()
     st.markdown('<div class="section-heading">TOP 10 HIGHEST RATED MOVIES</div>', unsafe_allow_html=True)
