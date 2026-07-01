@@ -3,9 +3,12 @@ import pandas as pd
 import numpy as np
 import json
 import ast
+#import plotly.graph_objects as go
+#import plotly.express as px
+import subprocess
+subprocess.run(["pip", "install", "plotly"], check=True)
 import plotly.graph_objects as go
 import plotly.express as px
-
 st.set_page_config(page_title="CineMatch", layout="wide", initial_sidebar_state="expanded")
 
 # ---- Netflix CSS ----
